@@ -3,14 +3,14 @@ package mr
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io/ioutil"
+	"log"
+	"net/rpc"
 	"os"
 	"sort"
 	"strconv"
 )
-import "log"
-import "net/rpc"
-import "hash/fnv"
 
 // for sorting by key.
 type ByKey []KeyValue
@@ -20,27 +20,21 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-//
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-//
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	for true {
 		reply := CallMaster()
@@ -54,6 +48,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 	}
 }
 
+// THIS IS LEFT
 func executeReduce(reducef func(string, []string) string, reply MrReply) {
 	intermediate := []KeyValue{}
 	for _, v := range reply.Files {
@@ -157,21 +152,48 @@ func CallMaster() MrReply {
 	return reply
 }
 
-func NotifyMaster(reduceIndex int, file string) {
-	args := NotifyIntermediateArgs{}
-	args.ReduceIndex = reduceIndex
-	args.File = file
+func NotifyMaster(reduceIndex int, filename string) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot read intermediate file: %v", err)
+	}
+	defer file.Close()
+
+	content, _ := ioutil.ReadAll(file)
+
+	args := NotifyIntermediateArgs{
+		ReduceIndex: reduceIndex,
+		File:        filename,
+		FileContent: content,
+	}
 	reply := NotifyReply{}
 	call("Master.NotifyIntermediateFile", &args, &reply)
 }
 
-//
 // send an RPC request to the master, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	network, _ := os.LookupEnv("NETWORK")
+	if network == "tcp" {
+		masterIP, ipok := os.LookupEnv("MASTER_IP")
+		masterPort, portok := os.LookupEnv("MASTER_PORT")
+		if !ipok || !portok {
+			log.Fatal("Environment variables MASTER_IP or MASTER_PORT not set")
+		}
+
+		address := masterIP + ":" + masterPort
+		c, err := rpc.DialHTTP("tcp", address)
+		if err != nil {
+			log.Fatal("dialing:", err)
+		}
+		defer c.Close()
+
+		err = c.Call(rpcname, args, reply)
+		return err == nil
+	}
+
+	// Unix socket fallback
 	sockname := masterSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
@@ -180,10 +202,5 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	defer c.Close()
 
 	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
-	}
-
-	//fmt.Println(err)
-	return false
+	return err == nil
 }

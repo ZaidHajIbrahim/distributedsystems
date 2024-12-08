@@ -6,8 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
@@ -23,7 +25,6 @@ type ExampleReply struct {
 }
 
 type MrArgs struct {
-
 }
 
 type MrReply struct {
@@ -31,12 +32,13 @@ type MrReply struct {
 	TaskType    string
 	Index       int
 	NReduce     int
-	Files       []string
+	Files       []FileData
 }
 
 type NotifyIntermediateArgs struct {
 	ReduceIndex int
 	File        string
+	FileContent []byte
 }
 
 type NotifyMapSuccessArgs struct {
@@ -48,10 +50,9 @@ type NotifyReduceSuccessArgs struct {
 }
 
 type NotifyReply struct {
-
 }
-// Add your RPC definitions here.
 
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.

@@ -2,13 +2,13 @@ package mr
 
 import (
 	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
 	"sync"
 	"time"
 )
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
 
 const (
 	NotStarted = iota
@@ -32,10 +32,14 @@ type Master struct {
 	nReduce           int
 	mapIndex          int
 	reduceIndex       int
-	intermediateFiles [][]string
+	intermediateFiles [][]FileData
 	RWMutexLock       *sync.RWMutex
 	mapFinished       bool
 	reduceFinished    bool
+}
+type FileData struct {
+	FileName    string
+	FileContent []byte
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -60,8 +64,9 @@ func (m *Master) DistributeTask(args *MrArgs, reply *MrReply) error {
 		m.RWMutexLock.Unlock()
 		go m.watchWorkerReduce(reduceNumber)
 		return nil
+	default:
+		return nil
 	}
-	return nil
 }
 
 func (m *Master) watchWorkerMap(task MapTask) {
@@ -109,7 +114,12 @@ func (m *Master) watchWorkerReduce(reduceNumber int) {
 func (m *Master) NotifyIntermediateFile(args *NotifyIntermediateArgs, reply *NotifyReply) error {
 	m.RWMutexLock.Lock()
 	defer m.RWMutexLock.Unlock()
-	m.intermediateFiles[args.ReduceIndex] = append(m.intermediateFiles[args.ReduceIndex], args.File)
+
+	fileData := FileData{
+		FileName:    args.File,
+		FileContent: args.FileContent, // Add content here
+	}
+	m.intermediateFiles[args.ReduceIndex] = append(m.intermediateFiles[args.ReduceIndex], fileData)
 	return nil
 }
 
@@ -149,26 +159,37 @@ func (m *Master) NotifyReduceSuccess(args *NotifyReduceSuccessArgs, reply *Notif
 	return nil
 }
 
-//
 // start a thread that listens for RPCs from worker.go
-//
 func (m *Master) server() {
 	rpc.Register(m)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := masterSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
-	if e != nil {
-		log.Fatal("listen error:", e)
+	network, _ := os.LookupEnv("NETWORK")
+
+	if network == "tcp" {
+		masterPort, ok := os.LookupEnv("MASTER_PORT")
+		if !ok {
+			log.Fatal("Environment variable MASTER_PORT not set")
+		}
+
+		l, e := net.Listen("tcp", ":"+masterPort)
+		if e != nil {
+			log.Fatal("listen error:", e)
+		}
+		go http.Serve(l, nil)
+		return
+	} else {
+		sockname := masterSock()
+		os.Remove(sockname)
+		l, e := net.Listen("unix", sockname)
+		if e != nil {
+			log.Fatal("listen error:", e)
+		}
+		go http.Serve(l, nil)
 	}
-	go http.Serve(l, nil)
 }
 
-//
 // main/mrmaster.go calls Done() periodically to find out
 // if the entire job has finished.
-//
 func (m *Master) Done() bool {
 	m.RWMutexLock.Lock()
 	defer m.RWMutexLock.Unlock()
@@ -176,12 +197,10 @@ func (m *Master) Done() bool {
 	return ret
 }
 
-//
 // create a Master.
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//
-func MakeMaster(files []string, nReduce int) *Master {
+func MakeCoordinator(files []string, nReduce int) *Master {
 	m := Master{}
 	maptasks = make(chan MapTask, len(files))
 	reducetasks = make(chan int, nReduce)
@@ -197,7 +216,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 
 	m.inputFiles = files
 	m.nReduce = nReduce
-	m.intermediateFiles = make([][]string, nReduce)
+	m.intermediateFiles = make([][]FileData, nReduce)
 	m.RWMutexLock = new(sync.RWMutex)
 	m.server()
 	return &m
