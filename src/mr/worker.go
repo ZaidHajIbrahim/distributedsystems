@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -48,15 +49,10 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 	}
 }
 
-// THIS IS LEFT
 func executeReduce(reducef func(string, []string) string, reply MrReply) {
 	intermediate := []KeyValue{}
-	for _, v := range reply.Files {
-		file, err := os.Open(v)
-		if err != nil {
-			log.Fatalf("cannot open %v", v)
-		}
-		dec := json.NewDecoder(file)
+	for _, FileData := range reply.Files {
+		dec := json.NewDecoder(bytes.NewReader(FileData.FileContent))
 		for {
 			var kv KeyValue
 			if err := dec.Decode(&kv); err != nil {
@@ -64,7 +60,6 @@ func executeReduce(reducef func(string, []string) string, reply MrReply) {
 			}
 			intermediate = append(intermediate, kv)
 		}
-		file.Close()
 	}
 	sort.Sort(ByKey(intermediate))
 
